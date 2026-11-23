@@ -1,3 +1,4 @@
+import {poses} from './pose.js';
 import {renderGlossary} from './glossary.js';
 import {newRig,targets} from './light-rig.js';
 import {displayPlate,resetAngle,savePlate,lighting} from './plate-view.js';
@@ -17,11 +18,13 @@ const observations={
 let mode=location.hash==='#glossary'?'terms':location.hash==='#quiz'?'quiz':'lab';
 let rig=newRig(),manual=true;
 let questions=deck(),index=0,answers=[],labLight='scene',tone='컬러',face=false,revision=0;
+let poseIndex=0, angles={}, editing=false;
+const poseState={get angles(){return angles;},get editing(){return editing;},change(key,value){angles={...angles,[key]:value}; $('poseStatus').textContent='수정한 자세';}};
 const current=()=>questions[index];
 function paint(){
  const ticket=++revision;
  const light=mode==='quiz'&&current()?current().light:labLight;
- displayPlate('figure',tone,face,light,mode==='lab'?rig:null,mode==='lab'&&manual).catch(()=>{
+ displayPlate('figure',tone,face,light,mode==='lab'?rig:null,mode==='lab'&&manual,mode==='lab'?poseState:null).catch(()=>{
   if(ticket!==revision)return;
   $('gallery').innerHTML='<div class="failed">인체 모형을 불러오지 못했어요. <button class="small" id="retry">다시 불러오기</button></div>';
   $('retry').onclick=paint;
@@ -42,13 +45,22 @@ function render(){
  $('labTab').setAttribute('aria-pressed',String(lab));
  $('kicker').textContent=lab?'3D 인체 관찰':'인체 드로잉 연습';
  $('heading').innerHTML=lab?'인체의 <em>빛과 그림자</em>':'인체 <em>명암 퀴즈</em>';
- $('lead').textContent=lab?'같은 인물에 빛만 바꿔 보세요.':'빛을 받는 면과 빛이 가려진 곳을 살펴보세요.';
+ $('lead').textContent=lab?'자세와 조명을 바꾸며 인체의 명암을 관찰하세요.':'빛을 받는 면과 빛이 가려진 곳을 살펴보세요.';
  $('sceneTitle').textContent=face?'얼굴':'전신';
  $('sceneMeta').textContent='회색 무광 인체';
  $('stageFoot').innerHTML='<div class="seg">'+['컬러','흑백','투톤'].map(t=>'<button data-tone="'+t+'" aria-pressed="'+(tone===t)+'">'+t+'</button>').join('')+'</div><button id="zoom" aria-pressed="'+face+'">'+(face?'전신 보기':'얼굴 확대')+'</button><button id="reset">정면 보기</button><span class="orbit-help">드래그로 시점 회전</span>';
  document.querySelectorAll('[data-tone]').forEach(b=>b.onclick=()=>{tone=b.dataset.tone;render();});
  $('zoom').onclick=()=>{face=!face;render();};
  $('reset').onclick=resetAngle;
+ if(lab){
+  const bar=document.createElement('div');bar.className='pose-bar';
+  bar.innerHTML='<label>인체 자세 <select id="poseChoice">'+poses.map(([label],i)=>'<option value="'+i+'">'+label+'</option>').join('')+'</select></label><button id="poseEdit" aria-pressed="'+editing+'">관절 드래그</button><button id="poseReset">자세 복원</button><span id="poseStatus">'+(angles!==poses[poseIndex][1]&&Object.keys(angles).length?'수정한 자세':'')+'</span>';
+  $('stageFoot').prepend(bar);$('poseChoice').value=poseIndex;
+  $('poseChoice').onchange=e=>{poseIndex=Number(e.target.value);angles=poses[poseIndex][1];render();};
+  $('poseReset').onclick=()=>{angles=poses[poseIndex][1];render();};
+  $('poseEdit').onclick=()=>{editing=!editing;render();};
+  if(editing)document.querySelector('.orbit-help').textContent='관절점을 좌우로 끌어 옆으로, 위아래로 끌어 앞뒤로 굽혀요. 빈 곳은 시점 회전.';
+ }
  if(lab)renderLab();else renderQuiz();
  paint();
 }
