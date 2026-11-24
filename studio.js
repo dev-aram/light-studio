@@ -43,7 +43,12 @@ function syncSliders(){
   input.previousElementSibling.textContent=Math.round(input.value)+'°';
  });
 }
-const poseState={get mirror(){return subject==='hand'&&mirror;},get angles(){return angles;},get editing(){return editing;},get guides(){return guides;},get selected(){return selected;},get revision(){return poseRevision;},
+const poseState={syncLight(key){
+ for(const [suffix,field] of [['Angle','angle'],['Height','height']]){
+  const input=$(key+suffix);
+  if(input){input.value=Math.round(rig[key][field]);input.previousElementSibling.value=input.value+'°';}
+ }
+},get mirror(){return subject==='hand'&&mirror;},get angles(){return angles;},get editing(){return editing;},get guides(){return guides;},get selected(){return selected;},get revision(){return poseRevision;},
  select(key){selected=key;syncSliders();},update(next){angles=next;syncSliders();$('poseStatus').textContent='수정한 자세';}};
 const current=()=>questions[index];
 function paint(){
@@ -168,3 +173,31 @@ $('quizTab').onclick=()=>changeMode('quiz');$('labTab').onclick=()=>changeMode('
 $('termsTab').onclick=()=>changeMode('terms');
 window.addEventListener('pageshow',e=>{if(e.persisted){questions=deck();answers=[];index=0;render();}});
 render();
+
+const renderView=$('renderView'), expandButton=$('expandView'), closeButton=$('closeView');
+function expanded(enabled){
+ if(renderView.classList.contains('expanded')===enabled)return;
+ renderView.classList.toggle('expanded',enabled);
+ document.body.classList.toggle('view-expanded',enabled);
+ expandButton.setAttribute('aria-pressed',String(enabled));
+ closeButton.hidden=!enabled;
+ (enabled?closeButton:expandButton).focus({preventScroll:true});
+ requestAnimationFrame(paint);
+}
+expandButton.onclick=async()=>{
+ expanded(true);
+ try{await renderView.requestFullscreen?.();}catch{/* The fixed viewport also works in embeds. */}
+};
+closeButton.onclick=async()=>{
+ if(document.fullscreenElement===renderView)await document.exitFullscreen();
+ expanded(false);
+};
+document.addEventListener('fullscreenchange',()=>expanded(document.fullscreenElement===renderView));
+document.addEventListener('keydown',event=>{
+ if(event.key==='Escape'&&!document.fullscreenElement)expanded(false);
+ if(event.key==='Tab'&&renderView.classList.contains('expanded')&&!document.fullscreenElement){
+  event.preventDefault();const canvas=renderView.querySelector('canvas');
+  (document.activeElement===closeButton&&canvas?canvas:closeButton).focus();
+ }
+});
+new ResizeObserver(()=>{if(renderView.classList.contains('expanded'))paint();}).observe(renderView);

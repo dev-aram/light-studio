@@ -16,3 +16,12 @@ nav{display:flex;align-items:center;gap:4px}nav button,nav a{border:0;text-decor
 .part-control{display:inline-flex;align-items:center;gap:.45rem;font-size:.88rem}.part-control select{font:inherit;color:inherit;background:#28232e;border:1px solid var(--line);border-radius:.5rem;padding:.38rem .6rem}
 
 .study-tabs{display:flex;flex-wrap:wrap;gap:7px;padding:14px 16px 0}.study-tabs[hidden]{display:none}.study-tabs button{appearance:none;flex:0 0 auto;min-height:34px;padding:6px 14px;border:0;border-radius:999px;background:#514f57;color:#f5f2f5;font-size:.9rem;line-height:1.4;font-weight:600;cursor:pointer}.study-tabs button:focus-visible{outline:2px solid var(--lav);outline-offset:3px}.study-tabs button[aria-pressed=true]{background:#d4baff;color:#201629}.stageFoot button[aria-pressed=true]{border-color:#bda5df}.set-canvas{touch-action:none}
+
+#expandView{flex:none;background:#38343f;color:var(--text);border:1px solid var(--line);border-radius:999px;padding:5px 12px;cursor:pointer;font-size:.85rem}
+.viewerHead{flex-wrap:wrap;gap:8px}
+.view-expanded{overflow:hidden}
+
+#renderView.expanded{position:fixed;inset:0;z-index:1000;width:100%;height:100%;overflow:hidden;background:var(--bg)}
+#renderView.expanded :is(.gallery,.set-frame,.set-canvas){display:block;width:100%;height:100%;max-width:none;max-height:none;aspect-ratio:auto;margin:0;padding:0;border:0;border-radius:0}
+#renderView.expanded figcaption{display:none}
+#closeView{position:absolute;top:max(10px,env(safe-area-inset-top));right:max(10px,env(safe-area-inset-right));width:40px;height:40px;border:1px solid #ffffff70;border-radius:50%;background:#27252dbd;color:white;font:26px/1 sans-serif;cursor:pointer}

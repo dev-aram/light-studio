@@ -81,27 +81,37 @@ function lightGuide(s,setting,w,h){
   if(lamp){const az=lamp.angle*Math.PI/180,el=lamp.height*Math.PI/180;v=[Math.sin(az)*Math.cos(el),-Math.cos(az)*Math.cos(el),Math.sin(el)];}
   const [x,y,z]=v.map(n=>n/Math.hypot(...v)),right=Math.cos(a)*x+Math.sin(a)*y,up=-Math.sin(a)*Math.sin(e)*x+Math.cos(a)*Math.sin(e)*y+Math.cos(e)*z;
   const depth=Math.sin(a)*Math.cos(e)*x-Math.cos(a)*Math.cos(e)*y+Math.sin(e)*z;
-  const cx=32,cy=32+52*i,color=i?'#8ed9ff':'#ffdc91';
-  ctx.fillStyle='rgba(28,26,34,.87)';ctx.fillRect(8,cy-22,133,44);
-  ctx.strokeStyle=color;ctx.fillStyle=color;ctx.lineWidth=2;
-  const px=cx+right*16,py=cy-up*16;
-  ctx.beginPath();ctx.arc(px,py,3.5,0,2*Math.PI);ctx.fill();
-  if(Math.hypot(right,up)>.1){
-   const theta=Math.atan2(up,-right),ex=cx-right*8,ey=cy+up*8;
-   ctx.beginPath();ctx.moveTo(px,py);ctx.lineTo(ex,ey);ctx.lineTo(ex-7*Math.cos(theta-.49),ey-7*Math.sin(theta-.49));ctx.moveTo(ex,ey);ctx.lineTo(ex-7*Math.cos(theta+.49),ey-7*Math.sin(theta+.49));ctx.stroke();
-  }
-  ctx.font='bold 13px sans-serif';ctx.fillText(label+' 라이트',60,cy-2);
-  ctx.fillStyle='white';ctx.font='12px sans-serif';ctx.fillText(lamp?.power===0?'세기 0':s.light==='cloud'&&!s.manual?'확산 · 하늘':depth>.22?'화면 앞쪽':depth<-.22?'화면 뒤쪽':'화면 옆쪽',60,cy+14);
+  const width=w/factor,height=h/factor;
+  const radius=(i?9:12)*(1+.18*depth);
+  const cx=width*(.5+.38*right)-s.camera.x*height;
+  const cy=height*(.5-.39*up+s.camera.y);
+  const px=Math.min(width-radius-8,Math.max(radius+8,cx));
+  const py=Math.min(height-radius-22,Math.max(radius+6,cy));
+  ctx.save();
+  ctx.globalAlpha=lamp?.power===0?.48:1;
+  const gradient=ctx.createRadialGradient(px-radius*.35,py-radius*.4,0,px,py,radius);
+  gradient.addColorStop(0,i?'#f5ffff':'#fffee8');
+  gradient.addColorStop(.5,i?'#9ce4ff':'#ffdf82');
+  gradient.addColorStop(1,i?'#39759a':'#b27a27');
+  ctx.shadowColor=i?'#9be2ff':'#ffd063';ctx.shadowBlur=depth<0?3:9;
+  ctx.beginPath();ctx.arc(px,py,radius,0,2*Math.PI);ctx.fillStyle=gradient;ctx.fill();
+  ctx.shadowBlur=0;ctx.strokeStyle='#423b46';ctx.lineWidth=1.25;ctx.stroke();
+  const title=label+' · '+(depth<-.18?'뒤':depth>.18?'앞':'옆');
+  ctx.font='600 11px sans-serif';ctx.textAlign='center';ctx.lineWidth=3;
+  const tx=Math.max(23,Math.min(width-23,px));
+  ctx.strokeText(title,tx,py+radius+14);ctx.fillStyle='white';ctx.fillText(title,tx,py+radius+14);
+  ctx.restore();
+  if(lamp)s.lamps.push({key:i?'fill':'key',x:px/width,y:py/height});
  });ctx.restore();
 }
-function framing(s,setting){
+function framing(s,setting,widthFactor=.66){
  const p=s.mesh.pos,center=s.mesh.center;
  const a=(setting.az+s.yaw)*Math.PI/180,e=(setting.el+s.pitch)*Math.PI/180;
  const ca=Math.cos(a),sa=Math.sin(a),ce=Math.cos(e),se=Math.sin(e);
  let span=.9;
  for(let i=0;i<p.length;i+=3){
   const x=p[i]-center[0],y=p[i+1]-center[1],z=p[i+2]-center[2];
-  span=Math.max(span,2*Math.abs(ca*x+sa*y)*.66,2*Math.abs(-sa*se*x+ca*se*y+ce*z));
+  span=Math.max(span,2*Math.abs(ca*x+sa*y)*widthFactor,2*Math.abs(-sa*se*x+ca*se*y+ce*z));
  }
  return span*1.13;
 }
@@ -162,7 +172,11 @@ function isolate(mesh,region,setting){
 }
 function draw(s,quick=false,exporting=false){
  if(!s.canvas.isConnected)return;
- const canvas=s.canvas,w=quick?520:960,h=Math.round(w*.66);
+ const canvas=s.canvas,full=!!canvas.closest?.('#renderView.expanded');
+ const aspect=full?Math.max(.05,canvas.clientWidth/Math.max(1,canvas.clientHeight)):1/.66;
+ const limit=quick?640:Math.min(1920,Math.max(960,canvas.clientWidth||960,canvas.clientHeight||0));
+ const w=full?Math.max(1,Math.round(limit*Math.min(1,aspect))):quick?520:960;
+ const h=Math.max(1,Math.round(w/aspect));
  canvas.width=w;canvas.height=h;
  if(s.pose&&(s.lastAngles!==s.pose.angles||s.lastMirror!==s.pose.mirror)){
   s.mesh=deform(s.original,s.pose.angles);s.lastAngles=s.pose.angles;s.lastMirror=s.pose.mirror;
@@ -177,6 +191,11 @@ function draw(s,quick=false,exporting=false){
  const base=s.manual?relight(s.mesh,s.rig):s.original.bones||s.mesh.changed?presetColor(s.mesh,s.light,setting):s.mesh.colors[s.light];
  const mesh={...s.mesh,color:s.rig?indirectColor(s.mesh,base,s.rig,s.manual?null:s.light):base};
  const visible=isolated?isolate(mesh,isolated,setting):mesh;
+ if(full){
+  const fit=Math.min(h,w*.8)/h;
+  setting.span*=fit;
+  if(s.pose)setting.span=Math.max(setting.span,framing(s,setting,h/w)*fit);
+ }
  setting.span/=s.camera.scale;
  const az=(setting.az+s.yaw)*Math.PI/180,el=(setting.el+s.pitch)*Math.PI/180;
  const right=[Math.cos(az),Math.sin(az),0],up=[-Math.sin(az)*Math.sin(el),Math.cos(az)*Math.sin(el),Math.cos(el)];
@@ -184,6 +203,7 @@ function draw(s,quick=false,exporting=false){
  if(s.original.bones)for(let i=0;i<mesh.spec.length;i++){if(s.original.color[i*3]<100)for(let c=0;c<3;c++)mesh.color[i*3+c]*=.46;}
  const data=projectScene(visible,setting,w,h,s.yaw,s.pitch,false,s.tone,s.manual?0:s.light==='cloud'?.08:1);
  canvas.getContext('2d').putImageData(new ImageData(data,w,h),0,0);
+ s.lamps=[];
  if(s.pose?.guides&&!exporting)lightGuide(s,setting,w,h);
  s.handles=[];if(s.pose?.editing&&!exporting)markJoints(s,setting,w,h);
  canvas.setAttribute('aria-label',plates[s.id].caption+' · '+s.tone);
@@ -197,10 +217,17 @@ function bind(s){
  const c=s.canvas;let drag;
  function move(x,y){s.yaw=(s.yaw+x+360)%360;s.pitch=Math.min(89-s.settings.el,Math.max(-89-s.settings.el,s.pitch+y));}
  c.onpointerdown=e=>{if(e.button!==0&&e.button!==2)return;const bounds=c.getBoundingClientRect(),x=e.clientX-bounds.left,y=e.clientY-bounds.top;
+ const picked=e.button===0&&s.lamps?.findLast(l=>Math.hypot(x-l.x*bounds.width,y-l.y*bounds.height)<21);
+ if(picked){drag={lamp:picked.key,sign:Math.cos((s.rig[picked.key].angle-s.settings.az-s.yaw)*Math.PI/180)<0?-1:1,x:e.clientX,y:e.clientY};c.setPointerCapture(e.pointerId);return;}
  const near=s.pose?.editing?s.handles?.map(h=>({...h,dist:Math.hypot(h.x*bounds.width-x,h.y*bounds.height-y)})).sort((a,b)=>a.dist-b.dist)[0]:null;
  drag={x:e.clientX,y:e.clientY,pan:s.pan||e.shiftKey||e.button===2,handle:near?.dist<16?near:null};if(drag.handle){s.pose.select(drag.handle.key);requestDraw(s);}c.setPointerCapture(e.pointerId);};
  c.onpointermove=e=>{if(!drag)return;const dx=e.clientX-drag.x,dy=e.clientY-drag.y;
- if(drag.handle&&s.pose?.editing){const key=drag.handle.key,bone=(s.original.bones||bones).find(b=>b.key===key),r=c.getBoundingClientRect();
+ if(drag.lamp){
+  const lamp=s.rig[drag.lamp];
+  lamp.angle=((lamp.angle+dx*drag.sign*.65+540)%360)-180;
+  lamp.height=Math.max(-85,Math.min(85,lamp.height-dy*.55));
+  s.pose.syncLight(drag.lamp);
+ }else if(drag.handle&&s.pose?.editing){const key=drag.handle.key,bone=(s.original.bones||bones).find(b=>b.key===key),r=c.getBoundingClientRect();
   if(s.id.startsWith('body')&&bone.parent&&!['body','root'].includes(bone.parent)){
    const target=[(e.clientX-r.left)/r.width,(e.clientY-r.top)/r.height];s.pose.update(reach(s.pose.angles,key,target,s.project,s.original.bones));
   }else{
