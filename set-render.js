@@ -17,7 +17,7 @@ export function decodeSet(buffer){
 }
 const linear=Array.from({length:256},(_,i)=>{const x=i/255;return x<=.04045?x/12.92:((x+.055)/1.055)**2.4;});
 export function projectScene(mesh,setting,width,height,yaw,pitch,zoom,tone,specScale=1){
- const a=(setting.az+yaw)*rad,e=Math.max(-10,Math.min(82,setting.el+pitch))*rad;
+ const a=(setting.az+yaw)*rad,e=Math.max(-89,Math.min(89,setting.el+pitch))*rad;
  const ca=Math.cos(a),sa=Math.sin(a),ce=Math.cos(e),se=Math.sin(e);
  const vx=sa*ce,vy=-ca*ce,vz=se,scale=Math.min(height,width*.80)/setting.span*(zoom?1.35:1);
  const [tx,ty,tz]=setting.target,[lx,ly,lz]=setting.light;

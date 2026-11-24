@@ -15,9 +15,9 @@ function rotation(angles){
  return q;
 }
 function point(t,p){return add(rotate(t.q,p),t.offset);}
-export function skeleton(angles){
+export function skeleton(angles, rigBones=bones){
  const result={};
- for(const b of bones){
+ for(const b of rigBones){
   const parent=result[b.parent],pivot=parent?point(parent,b.p):b.p;
   const local=rotation(angles[b.key]||[0,0,0]),q=parent? mul(parent.q,local):local;
   const offset=sub(pivot,rotate(q,b.p));
@@ -26,7 +26,8 @@ export function skeleton(angles){
  return result;
 }
 export function deform(mesh,angles){
- const transforms=skeleton(angles),ordered=bones.map(b=>transforms[b.key]),skin=mesh.skin;
+ const rigBones=mesh.bones||bones;
+ const transforms=skeleton(angles,rigBones),ordered=rigBones.map(b=>transforms[b.key]),skin=mesh.skin;
  const pos=new Float32Array(mesh.pos.length),norm=new Float32Array(pos.length),environment=mesh.environment.slice();
  const min=[Infinity,Infinity,Infinity],max=min.map(v=>-v);
  for(let i=0;i<mesh.spec.length;i++){
@@ -42,21 +43,21 @@ export function deform(mesh,angles){
   const delta=55*(n[2]-mesh.norm[k+2]);
   environment[i*2]=Math.max(0,Math.min(255,environment[i*2]+delta));environment[i*2+1]=Math.max(0,Math.min(255,environment[i*2+1]-delta));
  }
- const pivots=Object.fromEntries(bones.map(b=>[b.key,transforms[b.key].pivot]));
+ const pivots=Object.fromEntries(rigBones.map(b=>[b.key,transforms[b.key].pivot]));
  const center=min.map((v,i)=>(v+max[i])/2);
- const face=point(transforms.head,[0,-.067,2.70]);
- return {...mesh,pos,norm,environment,pivots,face,center,focus:{face,chest:point(transforms.body,[0,-.09,2.1]),belly:point(transforms.body,[0,-.09,1.67])},changed:Object.values(angles).some(r=>r.some(Boolean))};
+ const face=transforms.head?point(transforms.head,[0,-.067,2.80]):center;
+ return {...mesh,pos,norm,environment,pivots,face,center,focus:transforms.body?{face,chest:point(transforms.body,[0,-.09,2.23]),belly:point(transforms.body,[0,-.09,1.80])}:{face:center,chest:center,belly:center},changed:Object.values(angles).some(r=>r.some(Boolean))};
 }
 // Damped screen-space IK adjusts parent rotations while keeping the skeleton's lengths fixed.
-export function reach(initial,key,target,project){
- const joint=bones.find(b=>b.key===key);let parent=joint.parent;
+export function reach(initial,key,target,project,rigBones=bones){
+ const joint=rigBones.find(b=>b.key===key);let parent=joint.parent;
  const chain=[];
  while(parent&&parent!=='root'&&parent!=='body'&&chain.length<2){
-  const bone=bones.find(b=>b.key===parent);chain.push(bone);parent=bone.parent;
+  const bone=rigBones.find(b=>b.key===parent);chain.push(bone);parent=bone.parent;
  }
  if(!chain.length)return initial;
  const next={...initial};for(const b of chain)next[b.key]=[...(next[b.key]||[0,0,0])];
- const at=()=>project(skeleton(next)[key].pivot);
+ const at=()=>project(skeleton(next,rigBones)[key].pivot);
  for(let j=0;j<7;j++){
   const p=at(),dx=target[0]-p[0],dy=target[1]-p[1];if(Math.hypot(dx,dy)<.003)break;
   const columns=[];let xx=.00003,xy=0,yy=.00003;

@@ -1,6 +1,6 @@
 import {deform,joints,bones,reach} from './pose.js';
 import {backdrop,relight,indirectColor} from './light-rig.js';
-const plates={figure:{name:'전신 인체',caption:'회색 무광 전신 인체'}};
+const plates={bodyF:{name:'전신',caption:'실사형 여성 전신'},bodySM:{name:'전신',caption:'데포르메 남성 전신'},bodySF:{name:'전신',caption:'데포르메 여성 전신'},body:{name:'전신',caption:'실사형 남성 전신'},head:{name:'얼굴',caption:'실사형 흉상'},planes:{name:'얼굴',caption:'면 분할 두상'},hand:{name:'손',caption:'독립 손 모형'},figure:{name:'전신 인체',caption:'회색 무광 전신 인체'}};
 import {decodeSet,projectScene} from './set-render.js';
 
 const meshCache=new Map();
@@ -27,6 +27,24 @@ async function getMesh(id){
  }
  return meshCache.get(id);
 }
+const studyMeshes=new Map(), cameras=new Map();
+export const studyBones=await fetch('./assets/study/rigs.json').then(r=>r.json());
+async function studyMesh(id){
+ if(!studyMeshes.has(id))studyMeshes.set(id,(async()=>{
+  const response=await fetch('./assets/study/'+id+'.set');
+  if(!response.ok)throw Error('model');
+  const buf=await response.arrayBuffer(),header=new DataView(buf),count=header.getUint32(0,true),offset=buf.byteLength-count*8;
+  const mesh=decodeSet(buf.slice(0,offset));mesh.skin=new Uint8Array(buf,offset);mesh.bones=studyBones[id];
+  mesh.environment=new Uint8Array(count*2);
+  for(let i=0;i<count;i++){
+   const z=mesh.norm[i*3+2];mesh.environment[2*i]=105+75*z;mesh.environment[2*i+1]=75-65*z;
+  }
+  return mesh;
+ })().catch(e=>{studyMeshes.delete(id);throw e;}));
+ return studyMeshes.get(id);
+}
+export function magnify(factor){if(view){view.camera.scale=Math.max(.45,Math.min(4,view.camera.scale*factor));requestDraw(view);}}
+export function panMode(value){if(view)view.pan=value;}
 function presetColor(mesh,key,setting){
  const v=setting.light.slice();
  if(setting.point) v[2]-=1.6;
@@ -45,7 +63,7 @@ function markJoints(s,setting,w,h){
  const a=(setting.az+s.yaw)*Math.PI/180,e=(setting.el+s.pitch)*Math.PI/180,scale=Math.min(h,w*.8)/setting.span;
  s.project=p=>{const [x,y,z]=p.map((v,i)=>v-setting.target[i]);return [.5+scale*(Math.cos(a)*x+Math.sin(a)*y)/w,.5-scale*(-Math.sin(a)*Math.sin(e)*x+Math.cos(a)*Math.sin(e)*y+Math.cos(e)*z)/h];};
  const ctx=s.canvas.getContext('2d'),radius=6*w/(s.canvas.clientWidth||w);
- s.handles=joints.map(([key,label])=>{
+ s.handles=(s.original.bones?.map(b=>[b.key,b.label])||joints).filter(([key])=>!s.regions[s.zoom]||key===({face:"head",left:"wrist1",right:"wrist-1"})[s.zoom]).map(([key,label])=>{
   const [x,y,z]=s.mesh.pivots[key].map((v,i)=>v-setting.target[i]);
   const px=w/2+scale*(Math.cos(a)*x+Math.sin(a)*y);
   const py=h/2-scale*(-Math.sin(a)*Math.sin(e)*x+Math.cos(a)*Math.sin(e)*y+Math.cos(e)*z);
@@ -87,19 +105,84 @@ function framing(s,setting){
  }
  return span*1.13;
 }
+// Select triangles in the rest pose so the same anatomy stays visible after posing.
+function anatomyRegions(mesh){
+ const regions={};
+ for(const key of ['face','left','right']){
+  const side=key==='left'?1:-1;
+  const wrist=bones.find(b=>b.key==='wrist'+side);
+  const axis=wrist.end.map((v,i)=>v-wrist.p[i]);
+  const length=Math.hypot(...axis);
+  const distance=new Float32Array(mesh.spec.length);
+  for(let i=0;i<distance.length;i++){
+   const k=i*3,x=mesh.pos[k],y=mesh.pos[k+1],z=mesh.pos[k+2];
+   const distal=((x-wrist.p[0])*axis[0]+(y-wrist.p[1])*axis[1]+(z-wrist.p[2])*axis[2])/length;
+   distance[i]=key==='face'? z-2.525 : Math.min(side*x-.62,-y-.11,distal+.055);
+  }
+  const triangles=[],cuts=[],edges=new Map(),rim=[];
+  function slice(i,j){
+   const a=Math.min(i,j),b=Math.max(i,j),edge=a+':'+b;
+   if(!edges.has(edge)){edges.set(edge,distance.length+cuts.length);cuts.push([a,b,distance[a]/(distance[a]-distance[b])]);}
+   return edges.get(edge);
+  }
+  for(let i=0;i<mesh.indices.length;i+=3){
+   const face=mesh.indices.subarray(i,i+3),polygon=[],ends=[];
+   for(let k=0;k<3;k++){
+    const a=face[k],b=face[(k+1)%3],inside=distance[a]>=0;
+    if(inside)polygon.push(a);
+    if(inside!==(distance[b]>=0)){const v=slice(a,b);polygon.push(v);ends.push(v);}
+   }
+   if(ends.length===2)rim.push(ends);
+   for(let j=2;j<polygon.length;j++)triangles.push(polygon[0],polygon[j-1],polygon[j]);
+  }
+  const vertices=[...new Set(triangles)],cap=distance.length+cuts.length;
+  for(const [a,b] of rim)triangles.push(a,b,cap);
+  regions[key]={indices:new Uint32Array(triangles),vertices,cuts};
+ }
+ return regions;
+}
+function isolate(mesh,region,setting){
+ const expanded={...mesh,indices:region.indices};
+ for(const field of ['pos','norm','color','spec']){
+  const source=mesh[field],stride=field==='spec'?1:3,offset=source.length;
+  const values=new source.constructor(offset+(region.cuts.length+1)*stride);values.set(source);
+  const total=new Float64Array(stride);
+  region.cuts.forEach(([a,b,t],i)=>{for(let d=0;d<stride;d++){
+   const value=source[a*stride+d]*(1-t)+source[b*stride+d]*t;
+   values[offset+i*stride+d]=value;total[d]+=value;
+  }});
+  total.forEach((sum,d)=>values[values.length-stride+d]=sum/region.cuts.length);
+  expanded[field]=values;
+ }
+ const min=[Infinity,Infinity,Infinity],max=min.map(()=>-Infinity);
+ for(const v of region.vertices)for(let i=0;i<3;i++){const n=expanded.pos[v*3+i];min[i]=Math.min(min[i],n);max[i]=Math.max(max[i],n);}
+ setting.target=min.map((n,i)=>(n+max[i])/2);
+ setting.span=1.08*Math.hypot(...min.map((n,i)=>max[i]-n));
+ return expanded;
+}
 function draw(s,quick=false,exporting=false){
  if(!s.canvas.isConnected)return;
  const canvas=s.canvas,w=quick?520:960,h=Math.round(w*.66);
  canvas.width=w;canvas.height=h;
- if(s.pose&&s.lastAngles!==s.pose.angles){
-  s.mesh=deform(s.original,s.pose.angles);s.lastAngles=s.pose.angles;
+ if(s.pose&&(s.lastAngles!==s.pose.angles||s.lastMirror!==s.pose.mirror)){
+  s.mesh=deform(s.original,s.pose.angles);s.lastAngles=s.pose.angles;s.lastMirror=s.pose.mirror;
+  if(s.pose.mirror){
+   for(let k=0;k<s.mesh.pos.length;k+=3){s.mesh.pos[k]*=-1;s.mesh.norm[k]*=-1;}
+   for(const p of Object.values(s.mesh.pivots))p[0]*=-1;s.mesh.center[0]*=-1;
+  }
  }else if(!s.pose){s.mesh=s.original;s.lastAngles=null;}
  const setting={...s.settings,...s.settings.presets[s.light],bg:s.rig?backdrop(s.rig):'#888888'};
- if(s.pose){if(s.frameRevision!==s.pose.revision){s.frameRevision=s.pose.revision;s.center=s.mesh.center;s.span=framing(s,setting);}setting.target=s.center||s.mesh.center;setting.span=s.span;}else{s.frameRevision=null;}
- if(s.zoom){setting.target=s.mesh.face||s.settings.faceTarget;setting.span=.77;}
- const base=s.manual?relight(s.mesh,s.rig):s.mesh.changed?presetColor(s.mesh,s.light,setting):s.mesh.colors[s.light];
+ if(s.pose){if(s.frameRevision!==s.pose.revision){s.frameRevision=s.pose.revision;s.center=s.mesh.center;s.span=framing(s,setting);}setting.target=s.center||s.mesh.center;setting.span=Math.max(s.span,framing(s,setting));}else{s.frameRevision=null;}
+ const isolated=s.regions[s.zoom];
+ const base=s.manual?relight(s.mesh,s.rig):s.original.bones||s.mesh.changed?presetColor(s.mesh,s.light,setting):s.mesh.colors[s.light];
  const mesh={...s.mesh,color:s.rig?indirectColor(s.mesh,base,s.rig,s.manual?null:s.light):base};
- const data=projectScene(mesh,setting,w,h,s.yaw,s.pitch,false,s.tone,s.manual?0:s.light==='cloud'?.08:1);
+ const visible=isolated?isolate(mesh,isolated,setting):mesh;
+ setting.span/=s.camera.scale;
+ const az=(setting.az+s.yaw)*Math.PI/180,el=(setting.el+s.pitch)*Math.PI/180;
+ const right=[Math.cos(az),Math.sin(az),0],up=[-Math.sin(az)*Math.sin(el),Math.cos(az)*Math.sin(el),Math.cos(el)];
+ setting.target=setting.target.map((v,i)=>v+setting.span*(s.camera.x*right[i]+s.camera.y*up[i]));
+ if(s.original.bones)for(let i=0;i<mesh.spec.length;i++){if(s.original.color[i*3]<100)for(let c=0;c<3;c++)mesh.color[i*3+c]*=.46;}
+ const data=projectScene(visible,setting,w,h,s.yaw,s.pitch,false,s.tone,s.manual?0:s.light==='cloud'?.08:1);
  canvas.getContext('2d').putImageData(new ImageData(data,w,h),0,0);
  if(s.pose?.guides&&!exporting)lightGuide(s,setting,w,h);
  s.handles=[];if(s.pose?.editing&&!exporting)markJoints(s,setting,w,h);
@@ -112,39 +195,43 @@ function requestDraw(s,quick=false){
 }
 function bind(s){
  const c=s.canvas;let drag;
- function move(x,y){s.yaw=(s.yaw+x+360)%360;s.pitch=Math.min(82-s.settings.el,Math.max(-10-s.settings.el,s.pitch+y));}
- c.onpointerdown=e=>{if(e.button!==0)return;const bounds=c.getBoundingClientRect(),x=e.clientX-bounds.left,y=e.clientY-bounds.top;
+ function move(x,y){s.yaw=(s.yaw+x+360)%360;s.pitch=Math.min(89-s.settings.el,Math.max(-89-s.settings.el,s.pitch+y));}
+ c.onpointerdown=e=>{if(e.button!==0&&e.button!==2)return;const bounds=c.getBoundingClientRect(),x=e.clientX-bounds.left,y=e.clientY-bounds.top;
  const near=s.pose?.editing?s.handles?.map(h=>({...h,dist:Math.hypot(h.x*bounds.width-x,h.y*bounds.height-y)})).sort((a,b)=>a.dist-b.dist)[0]:null;
- drag={x:e.clientX,y:e.clientY,handle:near?.dist<16?near:null};if(drag.handle){s.pose.select(drag.handle.key);requestDraw(s);}c.setPointerCapture(e.pointerId);};
+ drag={x:e.clientX,y:e.clientY,pan:s.pan||e.shiftKey||e.button===2,handle:near?.dist<16?near:null};if(drag.handle){s.pose.select(drag.handle.key);requestDraw(s);}c.setPointerCapture(e.pointerId);};
  c.onpointermove=e=>{if(!drag)return;const dx=e.clientX-drag.x,dy=e.clientY-drag.y;
- if(drag.handle&&s.pose?.editing){const key=drag.handle.key,bone=bones.find(b=>b.key===key),r=c.getBoundingClientRect();
-  if(bone.parent&&!['body','root'].includes(bone.parent)){
-   const target=[(e.clientX-r.left)/r.width,(e.clientY-r.top)/r.height];s.pose.update(reach(s.pose.angles,key,target,s.project));
+ if(drag.handle&&s.pose?.editing){const key=drag.handle.key,bone=(s.original.bones||bones).find(b=>b.key===key),r=c.getBoundingClientRect();
+  if(s.id.startsWith('body')&&bone.parent&&!['body','root'].includes(bone.parent)){
+   const target=[(e.clientX-r.left)/r.width,(e.clientY-r.top)/r.height];s.pose.update(reach(s.pose.angles,key,target,s.project,s.original.bones));
   }else{
-   const v=[...(s.pose.angles[key]||[0,0,0])];v[0]=Math.max(bone.limits[0][0],Math.min(bone.limits[0][1],v[0]+dy*.5));v[1]=Math.max(bone.limits[1][0],Math.min(bone.limits[1][1],v[1]+dx*.5));s.pose.update({...s.pose.angles,[key]:v});
+   const v=[...(s.pose.angles[key]||[0,0,0])];v[0]=Math.max(bone.limits[0][0],Math.min(bone.limits[0][1],v[0]+dy*.5));const axis=key.startsWith("eye")||key==="neck"?2:1;v[axis]=Math.max(bone.limits[axis][0],Math.min(bone.limits[axis][1],v[axis]+dx*.5));s.pose.update({...s.pose.angles,[key]:v});
   }}
+ else if(drag.pan){s.camera.x-=dx/c.clientHeight;s.camera.y+=dy/c.clientHeight;}
  else move(-dx*.48,dy*.32);
  drag.x=e.clientX;drag.y=e.clientY;requestDraw(s,true);};
  c.onpointerup=c.onpointercancel=c.onlostpointercapture=()=>{if(drag){drag=null;requestDraw(s);}};
+ c.oncontextmenu=e=>e.preventDefault();c.onwheel=e=>{e.preventDefault();magnify(Math.exp(-Math.sign(e.deltaY)*.12));};
  c.onkeydown=e=>{
   const steps={ArrowLeft:[-10,0],ArrowRight:[10,0],ArrowUp:[0,8],ArrowDown:[0,-8]};
   if(!steps[e.key])return;e.preventDefault();move(...steps[e.key]);requestDraw(s);
  };
 }
 export function setView(yaw,elevation){if(view){view.yaw=yaw;view.pitch=elevation-view.settings.el;}}
-export function resetAngle(){if(view){view.yaw=0;view.pitch=0;requestDraw(view);}}
+export function resetAngle(){if(view){view.yaw=0;view.pitch=0;Object.assign(view.camera,{x:0,y:0,scale:1});requestDraw(view);}}
 export function savePlate(){
  if(!view?.canvas.isConnected||view.ticket!==revision)return;
- draw(view,false,true);const a=document.createElement('a');a.download=plates[view.id].name+'-'+view.tone+'.png';a.href=view.canvas.toDataURL('image/png');a.click();requestDraw(view);
+ draw(view,false,true);const a=document.createElement('a');a.download=({face:'얼굴',left:'왼손',right:'오른손'}[view.zoom]||plates[view.id].name)+'-'+view.tone+'.png';a.href=view.canvas.toDataURL('image/png');a.click();requestDraw(view);
 }
 export async function displayPlate(id,tone,zoom,light='scene',rig=null,manual=false,pose=null){
  const ticket=++revision,gallery=document.getElementById('gallery');gallery.className='gallery model-set';
  if(!gallery.querySelector('.set-canvas'))gallery.innerHTML='<figure class="set-frame"><canvas tabindex="0" class="set-canvas" role="img"></canvas><figcaption>3D 모형을 불러오는 중…</figcaption></figure>';
  const canvas=gallery.querySelector('canvas');
- const [settings,mesh]=await Promise.all([getJson(),getMesh(id)]);
+ const [settings,mesh]=await Promise.all([getJson(),id==='figure'?getMesh(id):studyMesh(id)]);
  if(ticket!==revision||!canvas.isConnected)return;
  if(!view||view.canvas!==canvas||view.id!==id){
-  view={id,mesh,original:mesh,settings:settings[id],canvas,caption:gallery.querySelector('figcaption'),yaw:0,pitch:0};
+  const cameraKey=id.startsWith('body')?'body':id;
+  if(view)cameras.set(view.id.startsWith('body')?'body':view.id,{yaw:view.yaw,pitch:view.pitch,camera:view.camera,center:view.center,span:view.span,frameRevision:view.frameRevision});
+  view={id,mesh,regions:id==='figure'?anatomyRegions(mesh):{},original:mesh,settings:settings.figure,canvas,caption:gallery.querySelector('figcaption'),yaw:0,pitch:0,camera:{x:0,y:0,scale:1},...cameras.get(cameraKey)};
   bind(view);
  }
  Object.assign(view,{tone,zoom,light,ticket,rig,manual,pose});requestDraw(view);
