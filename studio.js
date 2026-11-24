@@ -1,7 +1,7 @@
-import {poses} from './pose.js';
+import {poses,bones} from './pose.js';
 import {renderGlossary} from './glossary.js';
 import {newRig,targets} from './light-rig.js';
-import {displayPlate,resetAngle,savePlate,lighting} from './plate-view.js';
+import {displayPlate,resetAngle,savePlate,setView,lighting} from './plate-view.js';
 import {deck} from './questions.js';
 
 const $=id=>document.getElementById(id);
@@ -19,7 +19,18 @@ let mode=location.hash==='#glossary'?'terms':location.hash==='#quiz'?'quiz':'lab
 let rig=newRig(),manual=true;
 let questions=deck(),index=0,answers=[],labLight='scene',tone='컬러',face=false,revision=0;
 let poseIndex=0, angles={}, editing=false;
-const poseState={get angles(){return angles;},get editing(){return editing;},change(key,value){angles={...angles,[key]:value}; $('poseStatus').textContent='수정한 자세';}};
+let selected='wrist-1',guides=true,poseRevision=0;
+function syncSliders(){
+ if(!$('boneChoice'))return;
+ $('boneChoice').value=selected;
+ const bone=bones.find(b=>b.key===selected);
+ document.querySelectorAll('[data-axis]').forEach((input,i)=>{
+  [input.min,input.max]=bone.limits[i];input.value=(angles[selected]||[0,0,0])[i];
+  input.previousElementSibling.textContent=Math.round(input.value)+'°';
+ });
+}
+const poseState={get angles(){return angles;},get editing(){return editing;},get guides(){return guides;},get selected(){return selected;},get revision(){return poseRevision;},
+ select(key){selected=key;syncSliders();},update(next){angles=next;syncSliders();$('poseStatus').textContent='수정한 자세';}};
 const current=()=>questions[index];
 function paint(){
  const ticket=++revision;
@@ -55,11 +66,17 @@ function render(){
  if(lab){
   const bar=document.createElement('div');bar.className='pose-bar';
   bar.innerHTML='<label>인체 자세 <select id="poseChoice">'+poses.map(([label],i)=>'<option value="'+i+'">'+label+'</option>').join('')+'</select></label><button id="poseEdit" aria-pressed="'+editing+'">관절 드래그</button><button id="poseReset">자세 복원</button><span id="poseStatus">'+(angles!==poses[poseIndex][1]&&Object.keys(angles).length?'수정한 자세':'')+'</span>';
-  $('stageFoot').prepend(bar);$('poseChoice').value=poseIndex;
-  $('poseChoice').onchange=e=>{poseIndex=Number(e.target.value);angles=poses[poseIndex][1];render();};
-  $('poseReset').onclick=()=>{angles=poses[poseIndex][1];render();};
+  bar.insertAdjacentHTML('beforeend','<button id="lightGuide" aria-pressed="'+guides+'">조명 방향</button>');
+  if(editing)bar.insertAdjacentHTML('beforeend','<div class="bone-controls"><label>관절 <select id="boneChoice">'+bones.map(b=>'<option value="'+b.key+'">'+b.label+'</option>').join('')+'</select></label>'+['앞뒤','좌우','비틀기'].map((label,i)=>'<label>'+label+' <output></output><input aria-label="'+label+' 각도" type="range" data-axis="'+i+'"></label>').join('')+'</div>');
+  $('stageFoot').prepend(bar);
+  $('lightGuide').onclick=()=>{guides=!guides;render();};
+  if(editing){syncSliders();$('boneChoice').onchange=e=>{poseState.select(e.target.value);paint();};
+   document.querySelectorAll('[data-axis]').forEach((input,i)=>input.oninput=()=>{const v=[...(angles[selected]||[0,0,0])];v[i]=Number(input.value);poseState.update({...angles,[selected]:v});paint();});}
+$('poseChoice').value=poseIndex;
+  $('poseChoice').onchange=e=>{poseIndex=Number(e.target.value);angles=poses[poseIndex][1];poseRevision++;setView(...poses[poseIndex][2]);render();};
+  $('poseReset').onclick=()=>{angles=poses[poseIndex][1];poseRevision++;setView(...poses[poseIndex][2]);render();};
   $('poseEdit').onclick=()=>{editing=!editing;render();};
-  if(editing)document.querySelector('.orbit-help').textContent='관절점을 좌우로 끌어 옆으로, 위아래로 끌어 앞뒤로 굽혀요. 빈 곳은 시점 회전.';
+  if(editing)document.querySelector('.orbit-help').textContent='손목·발목을 끌어 위치를 잡고, 관절별 각도는 슬라이더로 조절하세요. 빈 곳을 끌면 시점이 회전해요.';
  }
  if(lab)renderLab();else renderQuiz();
  paint();

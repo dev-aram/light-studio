@@ -27,9 +27,10 @@ function response(mesh,light,target,channel){
   const x=pos[k],y=pos[k+1],z=pos[k+2];
   let beam=1;
   if(target!=='whole'){
-   const dz=z+1.42-targets[target][1],dy=y+.09;
-   const axial=x*L[0]+dy*L[1]+dz*L[2];
-   const radial=Math.max(0,x*x+dy*dy+dz*dz-axial*axial);
+   const focus=mesh.focus?.[target]||[0,-.09,targets[target][1]];
+   const dx=x-focus[0],dz=z+1.42-focus[2],dy=y-focus[1];
+   const axial=dx*L[0]+dy*L[1]+dz*L[2];
+   const radial=Math.max(0,dx*dx+dy*dy+dz*dz-axial*axial);
    beam=Math.exp(-radial/(target==='face'?.16:.32));
   }
   values[i]=cos*visibility(map,x,y,z,cos)*beam;
